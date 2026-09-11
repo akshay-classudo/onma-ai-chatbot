@@ -200,10 +200,25 @@ USE_TZ = True
 STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 STORAGES = {
+    # Overriding STORAGES at all means Django no longer fills in its own
+    # 'default' (regular FileField/ImageField uploads, e.g. BotSettings.bot_icon)
+    # — `manage.py check` doesn't catch a missing key here, it only surfaces
+    # as InvalidStorageError the first time a file is actually saved.
+    'default': {
+        'BACKEND': 'django.core.files.storage.FileSystemStorage',
+    },
     'staticfiles': {
         'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage',
     },
 }
+
+# Admin uploads (currently just BotSettings.bot_icon). WhiteNoise only covers
+# STATIC_ROOT (collectstatic'd app assets), not admin-uploaded MEDIA_ROOT
+# files, so these are served by a plain Django view registered in
+# onma_bot/urls.py — adequate for a handful of small icon files; revisit
+# with real object storage (S3, etc.) if uploads ever need to scale further.
+MEDIA_URL = 'media/'
+MEDIA_ROOT = BASE_DIR / 'media'
 
 
 # Email

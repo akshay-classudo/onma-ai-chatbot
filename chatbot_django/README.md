@@ -47,6 +47,9 @@ admin panel and a cleaner data model, not the full V2 checklist. See
   still exists for non-streaming clients — see "How streaming works"
 - **Cloudflare Turnstile**: optional bot protection on both chat endpoints, off by
   default (needs real keys) — see "How Turnstile works"
+- **Admin-editable settings**: LLM API key/model/endpoint, bot name/icon, and
+  email/SMTP — all overridable from Admin → Bot → Bot settings, no `.env` edit or
+  restart needed — see "Admin-editable settings (BotSettings)"
 
 **Explicitly deferred** (still on the V2 build guide, not built here):
 
@@ -277,6 +280,54 @@ app-directories template loader returns the _first_ matching template it finds a
 `admin/base_site.html` shadowed ours completely — the override was invisible until the
 order was flipped. If you ever add another app that also ships an `admin/` template
 override, the same rule applies: put it before `django.contrib.admin`.
+
+## Admin-editable settings (BotSettings)
+
+Admin → Bot → Bot settings — a single-row settings screen (a real Django singleton
+model, not the generic key-value `bot_settings` table from the original build guide's
+V2 schema; a typed model gives proper widgets — password-masked API key/SMTP fields,
+an image upload for the icon — that a generic key-value table can't) for things that
+would otherwise need a `.env` edit and a server restart:
+
+- **Branding**: `bot_name` (overrides the widget's header title) and `bot_icon` (an
+  uploaded image overriding the default ONMA logo avatar)
+- **LLM provider**: `llm_api_key`, `llm_model`, `llm_endpoint`, `embedding_model`,
+  `embedding_endpoint` — lets an admin switch providers or rotate a key without
+  touching `.env`
+- **Email/SMTP**: `sales_notification_email`, `smtp_host`/`port`/`user`/`password`/
+  `use_tls`, `default_from_email` — for the lead-notification email specifically
+
+**Every field is optional and blank by default** — `bot/settings_store.py`'s
+`resolve(db_value, env_value)` returns the DB value only if it's non-blank, otherwise
+falls through to the existing `.env`-backed `django.conf.settings` value. This means
+the table can start (and stay) empty without changing any existing behavior; an admin
+only fills in the fields they actually want to override. `bot/llm.py` calls this on
+every request (no caching — a single indexed-PK lookup is cheap enough to just do
+fresh each time, which sidesteps the classic multi-worker cache-staleness problem
+entirely rather than needing Redis/Memcached as new infrastructure just for this).
+
+**Public branding endpoint**: `GET /api/config/` returns only `bot_name` and
+`bot_icon_url` — never the API key or SMTP credentials, even though they live on the
+same row. `widget.js` fetches this once on load and re-applies the header title and
+any already-rendered bot avatars if a custom name/icon is set; a brief moment showing
+the built-in defaults before this resolves is expected and harmless.
+
+**Verified end-to-end**, including a real mistake along the way worth keeping as a
+cautionary note: a real admin API key override was tested by setting `llm_api_key` to
+an obviously-fake value and confirming the app actually used it (a real 401 came back
+from the provider, proving the DB value — not `.env` — was sent). Separately, while
+exploring the new admin page for the first time, the `bot_name` field was set to a
+real custom value ("onma scout") but `llm_api_key` ended up containing what looks like
+the admin's own auto-generated superuser password rather than a real API key — almost
+certainly a mistaken paste — which **broke live chat** until spotted and cleared (the
+`bot_name` change was kept; only the API key field was reset to blank, falling back to
+the working `.env` key). Worth remembering: this table overriding `.env` means a wrong
+value here fails the same way a wrong `.env` value would, just without needing a
+restart to take effect *or* to undo.
+
+**Known limitation**: `bot_icon` uploads are served by a plain Django view
+(`onma_bot/urls.py`, see `settings.py`'s `MEDIA_ROOT` comment) rather than WhiteNoise —
+adequate for a handful of small icon files, not meant to scale to heavy media use.
 
 ## How language detection works
 
@@ -658,10 +709,11 @@ chatbot_django/
     CPANEL.md            # step-by-step for cPanel + Passenger + PostgreSQL hosting
   onma_bot/            # Django project (settings, urls, wsgi)
   bot/                 # the app
-    models.py          # ChatSession, ChatMessage, KnowledgeEntry, KnowledgeChunk, Lead, AnswerCache
-    admin.py            # admin panel registration + branding + reindex/erase actions
-    views.py            # /api/session/, /api/chat/[/stream/], /api/lead/, /demo/, BASE_INSTRUCTIONS
+    models.py          # ChatSession, ChatMessage, KnowledgeEntry, KnowledgeChunk, Lead, AnswerCache, BotSettings
+    admin.py            # admin panel registration + branding + reindex/erase actions + BotSettings singleton
+    views.py            # /api/session/, /api/chat/[/stream/], /api/lead/, /api/config/, /demo/, BASE_INSTRUCTIONS
     llm.py              # provider-specific LLM + embedding + streaming calls, isolated for swapping
+    settings_store.py    # get_bot_settings() / resolve() — DB-over-.env config overrides
     chunker.py          # paragraph-packing text chunker
     retrieval.py        # cosine-similarity search over KnowledgeChunk
     indexing.py          # shared chunk+embed logic (admin action & mgmt command)

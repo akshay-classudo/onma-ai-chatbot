@@ -170,3 +170,60 @@ class AnswerCache(models.Model):
 
     def __str__(self):
         return f"[{self.language}] {self.question_text[:50]}"
+
+
+class BotSettings(models.Model):
+    """
+    Singleton (always pk=1) — admin-editable overrides for things that would
+    otherwise need a .env edit + server restart. Every field here is
+    optional: blank means "fall through to the .env/settings.py value" (see
+    bot/settings_store.py's resolve() and get_bot_settings()), so this table
+    can start empty without breaking anything, and an admin only needs to
+    fill in the fields they actually want to override.
+
+    Secrets stored here (llm_api_key, smtp_password) are plain-text columns,
+    same trust boundary as .env — anyone with admin access already has full
+    control of the site, so this isn't a new exposure, just a different
+    place credentials live.
+    """
+
+    # Branding — read by the public /api/config/ endpoint, applied by the
+    # widget on load (bot/static/bot/widget.js).
+    bot_name = models.CharField(
+        max_length=100, blank=True,
+        help_text="Overrides the widget header title (e.g. \"ONMA scout Assistant\"). Blank = widget's own per-language default.",
+    )
+    bot_icon = models.ImageField(
+        upload_to="bot_settings/", blank=True, null=True,
+        help_text="Overrides the default ONMA logo avatar shown for bot messages. Blank = the bundled onma.png.",
+    )
+
+    # LLM provider — read by bot/llm.py on every call, so a change here
+    # takes effect on the very next chat message, no restart needed.
+    llm_api_key = models.CharField(max_length=255, blank=True, help_text="Overrides LLM_API_KEY from .env.")
+    llm_model = models.CharField(max_length=100, blank=True, help_text="e.g. gpt-4o-mini, or openai/gpt-4o-mini for OpenRouter. Overrides LLM_MODEL.")
+    llm_endpoint = models.URLField(max_length=300, blank=True, help_text="Overrides LLM_ENDPOINT.")
+    embedding_model = models.CharField(max_length=100, blank=True, help_text="Overrides EMBEDDING_MODEL.")
+    embedding_endpoint = models.URLField(max_length=300, blank=True, help_text="Overrides EMBEDDING_ENDPOINT.")
+
+    # Email / SMTP — read when sending a lead notification (views.lead_create).
+    sales_notification_email = models.EmailField(blank=True, help_text="Where lead notifications are sent. Overrides SALES_NOTIFICATION_EMAIL.")
+    smtp_host = models.CharField(max_length=255, blank=True, help_text="Overrides EMAIL_HOST.")
+    smtp_port = models.PositiveIntegerField(blank=True, null=True, help_text="Overrides EMAIL_PORT.")
+    smtp_user = models.CharField(max_length=255, blank=True, help_text="Overrides EMAIL_HOST_USER.")
+    smtp_password = models.CharField(max_length=255, blank=True, help_text="Overrides EMAIL_HOST_PASSWORD.")
+    smtp_use_tls = models.BooleanField(default=True, help_text="Overrides EMAIL_USE_TLS — only applies if an SMTP host is set above.")
+    default_from_email = models.EmailField(blank=True, help_text="Overrides DEFAULT_FROM_EMAIL.")
+
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Bot settings"
+        verbose_name_plural = "Bot settings"
+
+    def __str__(self):
+        return "Bot settings"
+
+    def save(self, *args, **kwargs):
+        self.pk = 1
+        super().save(*args, **kwargs)

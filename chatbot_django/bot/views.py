@@ -4,7 +4,7 @@ import secrets
 from datetime import timedelta
 
 from django.conf import settings
-from django.core.mail import send_mail
+from django.core.mail import get_connection, send_mail
 from django.http import JsonResponse, StreamingHttpResponse
 from django.shortcuts import render
 from django.utils import timezone
@@ -17,6 +17,7 @@ from .lead_detection import detect_sales_intent
 from .llm import FALLBACK_REPLIES, LlmError, chat_completion, embed_texts, stream_chat_completion
 from .models import ChatMessage, ChatSession, Lead
 from .retrieval import retrieve
+from .settings_store import get_bot_settings, resolve
 from .turnstile import verify_turnstile_token
 from .utils import anonymize_ip, client_ip
 
@@ -378,6 +379,27 @@ def lead_create(request):
         consent_at=timezone.now(),
     )
 
+    bot_settings = get_bot_settings()
+    sales_email = resolve(
+        bot_settings.sales_notification_email if bot_settings else "", settings.SALES_NOTIFICATION_EMAIL
+    )
+    from_email = resolve(bot_settings.default_from_email if bot_settings else "", settings.DEFAULT_FROM_EMAIL)
+
+    # A DB-configured SMTP host means "use these settings instead of the
+    # .env-backed default backend" — built explicitly per-send rather than
+    # mutating django.conf.settings, since that's fixed at process start and
+    # shared across every request/worker.
+    connection = None
+    if bot_settings and bot_settings.smtp_host:
+        connection = get_connection(
+            backend="django.core.mail.backends.smtp.EmailBackend",
+            host=bot_settings.smtp_host,
+            port=bot_settings.smtp_port or 587,
+            username=bot_settings.smtp_user,
+            password=bot_settings.smtp_password,
+            use_tls=bot_settings.smtp_use_tls,
+        )
+
     try:
         send_mail(
             subject=f"New chat lead: {name or email or phone}",
@@ -386,8 +408,9 @@ def lead_create(request):
                 f"Service interest: {service_interest}\nMessage: {message}\n"
                 f"Admin: /admin/bot/lead/{lead.pk}/change/"
             ),
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[settings.SALES_NOTIFICATION_EMAIL],
+            from_email=from_email,
+            recipient_list=[sales_email],
+            connection=connection,
         )
     except Exception:
         logger.exception("Failed to send lead notification email")
@@ -409,3 +432,19 @@ def _build_system_prompt(language: str, matches) -> str:
 
 def demo(request):
     return render(request, "bot/demo.html", {"turnstile_site_key": settings.TURNSTILE_SITE_KEY})
+
+
+def public_config(request):
+    """GET /api/config/ — public, unauthenticated. Only ever returns
+    branding an admin has chosen to expose (bot_name, bot_icon URL) — never
+    API keys or SMTP credentials, even though they live on the same
+    BotSettings row. The widget fetches this once on load to apply a custom
+    name/icon without needing a code change or redeploy."""
+    bot_settings = get_bot_settings()
+
+    bot_name = bot_settings.bot_name if bot_settings else ""
+    bot_icon_url = None
+    if bot_settings and bot_settings.bot_icon:
+        bot_icon_url = request.build_absolute_uri(bot_settings.bot_icon.url)
+
+    return JsonResponse({"bot_name": bot_name or None, "bot_icon_url": bot_icon_url})

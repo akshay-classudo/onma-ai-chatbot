@@ -14,10 +14,15 @@ Including another URLconf
     1. Import the include() function: from django.urls import include, path
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
+from django.conf import settings
 from django.contrib import admin
 from django.urls import include, path
+from django.views.static import serve as serve_media
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('', include('bot.urls')),
+    # Admin-uploaded files (BotSettings.bot_icon) — see settings.py's
+    # MEDIA_ROOT comment for why this is a plain view, not WhiteNoise.
+    path('media/<path:path>', serve_media, {'document_root': settings.MEDIA_ROOT}),
 ]

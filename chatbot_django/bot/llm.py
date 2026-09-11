@@ -2,12 +2,18 @@
 Thin wrapper around one LLM provider's chat-completions API.
 Provider-specific request/response shape lives only here — swapping
 providers (or moving to an EU-hosted one later) means editing this file only.
+
+API key/model/endpoint can be overridden per-request from the BotSettings
+admin singleton (bot/settings_store.py) without a restart — see
+_chat_config()/_embedding_config() below, which resolve DB-over-.env.
 """
 
 import json
 
 import requests
 from django.conf import settings
+
+from .settings_store import get_bot_settings, resolve
 
 FALLBACK_REPLIES = {
     "de": (
@@ -26,25 +32,40 @@ class LlmError(Exception):
     pass
 
 
+def _chat_config():
+    bot_settings = get_bot_settings()
+    api_key = resolve(bot_settings.llm_api_key if bot_settings else "", settings.LLM_API_KEY)
+    model = resolve(bot_settings.llm_model if bot_settings else "", settings.LLM_MODEL)
+    endpoint = resolve(bot_settings.llm_endpoint if bot_settings else "", settings.LLM_ENDPOINT)
+    return api_key, model, endpoint
+
+
+def _embedding_config():
+    bot_settings = get_bot_settings()
+    api_key = resolve(bot_settings.llm_api_key if bot_settings else "", settings.LLM_API_KEY)
+    model = resolve(bot_settings.embedding_model if bot_settings else "", settings.EMBEDDING_MODEL)
+    endpoint = resolve(bot_settings.embedding_endpoint if bot_settings else "", settings.EMBEDDING_ENDPOINT)
+    return api_key, model, endpoint
+
+
 def chat_completion(messages: list[dict]) -> str:
-    if not settings.LLM_API_KEY:
+    api_key, model, endpoint = _chat_config()
+    if not api_key:
         raise LlmError("LLM API key is not configured")
 
     payload = {
-        "model": settings.LLM_MODEL,
+        "model": model,
         "messages": messages,
         "temperature": 0.3,
         "max_tokens": 500,
     }
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {settings.LLM_API_KEY}",
+        "Authorization": f"Bearer {api_key}",
     }
 
     try:
-        response = requests.post(
-            settings.LLM_ENDPOINT, json=payload, headers=headers, timeout=25
-        )
+        response = requests.post(endpoint, json=payload, headers=headers, timeout=25)
     except requests.RequestException as exc:
         raise LlmError(f"LLM request failed: {exc}") from exc
 
@@ -69,11 +90,12 @@ def stream_chat_completion(messages: list[dict]):
     the first byte — request setup, auth, HTTP status; once streaming has
     started, a malformed individual line is skipped rather than aborting the
     whole reply."""
-    if not settings.LLM_API_KEY:
+    api_key, model, endpoint = _chat_config()
+    if not api_key:
         raise LlmError("LLM API key is not configured")
 
     payload = {
-        "model": settings.LLM_MODEL,
+        "model": model,
         "messages": messages,
         "temperature": 0.3,
         "max_tokens": 500,
@@ -81,13 +103,11 @@ def stream_chat_completion(messages: list[dict]):
     }
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {settings.LLM_API_KEY}",
+        "Authorization": f"Bearer {api_key}",
     }
 
     try:
-        response = requests.post(
-            settings.LLM_ENDPOINT, json=payload, headers=headers, timeout=60, stream=True
-        )
+        response = requests.post(endpoint, json=payload, headers=headers, timeout=60, stream=True)
     except requests.RequestException as exc:
         raise LlmError(f"LLM request failed: {exc}") from exc
 
@@ -119,22 +139,21 @@ def stream_chat_completion(messages: list[dict]):
 
 
 def embed_texts(texts: list[str]) -> list[list[float]]:
-    if not settings.LLM_API_KEY:
+    api_key, model, endpoint = _embedding_config()
+    if not api_key:
         raise LlmError("LLM API key is not configured")
 
     if not texts:
         return []
 
-    payload = {"model": settings.EMBEDDING_MODEL, "input": texts}
+    payload = {"model": model, "input": texts}
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {settings.LLM_API_KEY}",
+        "Authorization": f"Bearer {api_key}",
     }
 
     try:
-        response = requests.post(
-            settings.EMBEDDING_ENDPOINT, json=payload, headers=headers, timeout=25
-        )
+        response = requests.post(endpoint, json=payload, headers=headers, timeout=25)
     except requests.RequestException as exc:
         raise LlmError(f"Embedding request failed: {exc}") from exc
 

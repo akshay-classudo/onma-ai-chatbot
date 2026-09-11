@@ -1,12 +1,13 @@
+from django import forms
 from django.contrib import admin, messages
 from django.shortcuts import redirect, render
-from django.urls import path
+from django.urls import path, reverse
 
 from .forms import AddFromUrlForm
 from .indexing import reindex_entries, reindex_entry
 from .ingest_url import IngestError, ingest_url
 from .llm import LlmError
-from .models import AnswerCache, ChatMessage, ChatSession, KnowledgeChunk, KnowledgeEntry, Lead
+from .models import AnswerCache, BotSettings, ChatMessage, ChatSession, KnowledgeChunk, KnowledgeEntry, Lead
 
 admin.site.site_header = "ONMA scout Admin"
 admin.site.site_title = "ONMA scout Admin"
@@ -215,3 +216,43 @@ class AnswerCacheAdmin(admin.ModelAdmin):
 
     def has_change_permission(self, request, obj=None):
         return False
+
+
+@admin.register(BotSettings)
+class BotSettingsAdmin(admin.ModelAdmin):
+    """Singleton — always exactly one row (enforced by the model's save()
+    pinning pk=1). The changelist redirects straight to that row's change
+    form (or the add form, the very first time) instead of showing a list
+    of one, since there's never anything to select between."""
+
+    fieldsets = (
+        ("Branding", {"fields": ("bot_name", "bot_icon")}),
+        ("LLM provider (overrides .env when set)", {
+            "fields": ("llm_api_key", "llm_model", "llm_endpoint", "embedding_model", "embedding_endpoint"),
+        }),
+        ("Email / SMTP (overrides .env when set)", {
+            "fields": (
+                "sales_notification_email", "smtp_host", "smtp_port", "smtp_user",
+                "smtp_password", "smtp_use_tls", "default_from_email",
+            ),
+        }),
+    )
+
+    def get_form(self, request, obj=None, **kwargs):
+        form = super().get_form(request, obj, **kwargs)
+        for field_name in ("llm_api_key", "smtp_password"):
+            if field_name in form.base_fields:
+                form.base_fields[field_name].widget = forms.PasswordInput(render_value=True)
+        return form
+
+    def has_add_permission(self, request):
+        return not BotSettings.objects.exists()
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def changelist_view(self, request, extra_context=None):
+        existing = BotSettings.objects.first()
+        if existing:
+            return redirect(reverse("admin:bot_botsettings_change", args=[existing.pk]))
+        return redirect(reverse("admin:bot_botsettings_add"))

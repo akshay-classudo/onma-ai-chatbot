@@ -156,10 +156,37 @@
     this.pendingFirstOpen = false;
     this.history = [];
     this.lang = this._loadInitialLanguage();
+    this._remoteBotName = null;
+    this._remoteBotIcon = null;
     this._build();
     this._bind();
     this._checkConsent();
+    this._loadRemoteConfig();
   }
+
+  // Fetches admin-configured branding (BotSettings.bot_name/bot_icon, set
+  // via /admin/) and applies it once loaded — a brief moment of the
+  // built-in defaults before this resolves is expected and harmless (this
+  // is a branding nicety, not something that should block first render).
+  ONMAChatWidget.prototype._loadRemoteConfig = function () {
+    var self = this;
+    fetch(this.config.apiBase + '/api/config/')
+      .then(function (res) { return res.ok ? res.json() : null; })
+      .then(function (data) {
+        if (!data) return;
+        if (data.bot_name) self._remoteBotName = data.bot_name;
+        if (data.bot_icon_url) self._remoteBotIcon = data.bot_icon_url;
+        if (!data.bot_name && !data.bot_icon_url) return;
+
+        self._applyStrings();
+        if (data.bot_icon_url) {
+          self.el.root.querySelectorAll('[data-onma-bot-avatar]').forEach(function (img) {
+            img.src = data.bot_icon_url;
+          });
+        }
+      })
+      .catch(function () { /* keep the built-in defaults */ });
+  };
 
   ONMAChatWidget.prototype._loadInitialLanguage = function () {
     try {
@@ -243,9 +270,9 @@
     var t = this._t.bind(this);
 
     this.el.launcher.setAttribute('aria-label', t('launcherLabel'));
-    this.el.panel.setAttribute('aria-label', t('title'));
+    this.el.panel.setAttribute('aria-label', this._remoteBotName || t('title'));
     this.el.closeBtn.setAttribute('aria-label', t('closeLabel'));
-    this.el.title.textContent = t('title');
+    this.el.title.textContent = this._remoteBotName || t('title');
     this.el.statusText.textContent = t('subtitle');
     this.el.textarea.setAttribute('placeholder', t('placeholder'));
     this.el.textarea.setAttribute('aria-label', t('inputLabel'));
@@ -623,8 +650,9 @@
   };
 
   ONMAChatWidget.prototype._botAvatarHtml = function () {
+    var iconUrl = this._remoteBotIcon || this.config.logoUrl;
     return '<span class="onma-chat-avatar onma-chat-avatar-bot"><img src="' +
-      escapeHtml(this.config.logoUrl) + '" alt="ONMA scout" /></span>';
+      escapeHtml(iconUrl) + '" alt="" data-onma-bot-avatar /></span>';
   };
 
   ONMAChatWidget.prototype._renderMessage = function (role, content, sources) {
