@@ -108,34 +108,40 @@ def stream_chat_completion(messages: list[dict]):
 
     try:
         response = requests.post(endpoint, json=payload, headers=headers, timeout=60, stream=True)
+
+        if not response.ok:
+            raise LlmError(f"LLM request returned HTTP {response.status_code}: {response.text}")
+
+        # requests defaults to Latin-1 for text/event-stream (no charset in the
+        # response's Content-Type header), which silently mangles any non-ASCII
+        # character — force UTF-8, since every OpenAI-compatible provider
+        # actually sends UTF-8 regardless of what the header omits.
+        response.encoding = "utf-8"
+
+        for line in response.iter_lines(decode_unicode=True):
+            if not line or not line.startswith("data:"):
+                continue
+
+            data = line[len("data:"):].strip()
+            if data == "[DONE]":
+                break
+
+            try:
+                chunk = json.loads(data)
+                content = chunk["choices"][0]["delta"].get("content")
+            except (json.JSONDecodeError, KeyError, IndexError):
+                continue
+
+            if content:
+                yield content
     except requests.RequestException as exc:
+        # Covers the initial connection AND any hiccup mid-stream (timeout,
+        # dropped connection, chunked-encoding error from the provider) —
+        # without this, an error here would escape the caller's `except
+        # LlmError` in views.py, leaving the SSE response open with no
+        # closing "done" frame and the browser's fetch hanging forever
+        # (isSending stuck true, input permanently disabled).
         raise LlmError(f"LLM request failed: {exc}") from exc
-
-    if not response.ok:
-        raise LlmError(f"LLM request returned HTTP {response.status_code}: {response.text}")
-
-    # requests defaults to Latin-1 for text/event-stream (no charset in the
-    # response's Content-Type header), which silently mangles any non-ASCII
-    # character — force UTF-8, since every OpenAI-compatible provider
-    # actually sends UTF-8 regardless of what the header omits.
-    response.encoding = "utf-8"
-
-    for line in response.iter_lines(decode_unicode=True):
-        if not line or not line.startswith("data:"):
-            continue
-
-        data = line[len("data:"):].strip()
-        if data == "[DONE]":
-            break
-
-        try:
-            chunk = json.loads(data)
-            content = chunk["choices"][0]["delta"].get("content")
-        except (json.JSONDecodeError, KeyError, IndexError):
-            continue
-
-        if content:
-            yield content
 
 
 def embed_texts(texts: list[str]) -> list[list[float]]:
