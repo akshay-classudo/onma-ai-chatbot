@@ -502,6 +502,17 @@ Plus: a real OpenAI key with billing (swap back from OpenRouter — see Setup), 
 credentials (swap from the console `EMAIL_BACKEND`), and real Cloudflare Turnstile keys
 if bot protection is wanted publicly.
 
+### Deploying to cPanel
+
+If the target host is cPanel with **Setup Python App** (Passenger) and **PostgreSQL
+Databases** available, `deploy/CPANEL.md` has the complete step-by-step for that
+specific path — creating the database, wiring up `passenger_wsgi.py` (already in this
+project's root), `.env` values, migrating, and scheduling the GDPR purge via cPanel's
+native Cron Jobs UI instead of Task Scheduler/systemd. It also covers what to check
+first if Python App support or PostgreSQL isn't actually on the plan (common on
+cheaper shared hosting — Django can't run there at all if Python App support is
+missing, regardless of wanting cPanel specifically).
+
 ### Not done here (needs real infrastructure this machine doesn't have)
 
 - An actual domain + DNS + TLS certificate (Let's Encrypt is free and standard on Linux;
@@ -638,11 +649,13 @@ chatbot_django/
   requirements.txt
   .env / .env.example
   purge_cron.bat       # Task Scheduler wrapper for purge_old_data
+  passenger_wsgi.py     # entrypoint for cPanel's Setup Python App (Passenger)
   deploy/
-    run_waitress.bat    # Windows production entrypoint
-    run_gunicorn.sh      # Linux production entrypoint
+    run_waitress.bat    # Windows production entrypoint (self-managed VPS)
+    run_gunicorn.sh      # Linux production entrypoint (self-managed VPS)
     onma-chatbot.service # systemd unit (Linux)
     nginx.conf.example   # reverse proxy + TLS termination example (Linux)
+    CPANEL.md            # step-by-step for cPanel + Passenger + PostgreSQL hosting
   onma_bot/            # Django project (settings, urls, wsgi)
   bot/                 # the app
     models.py          # ChatSession, ChatMessage, KnowledgeEntry, KnowledgeChunk, Lead, AnswerCache
